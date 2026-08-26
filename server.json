@@ -17,14 +17,21 @@
       },
       "environmentVariables": [
         {
+          "name": "SKYLIGHT_REFRESH_TOKEN",
+          "description": "An OAuth refresh token you already hold. Supply this and no password is needed — the login is skipped entirely.",
+          "isRequired": false,
+          "format": "string",
+          "isSecret": true
+        },
+        {
           "name": "SKYLIGHT_EMAIL",
-          "description": "Skylight account email. Pair with SKYLIGHT_PASSWORD for direct login.",
+          "description": "Skylight account email. Pair with SKYLIGHT_PASSWORD for direct login. Needed only if you are not supplying SKYLIGHT_REFRESH_TOKEN.",
           "isRequired": false,
           "format": "string"
         },
         {
           "name": "SKYLIGHT_PASSWORD",
-          "description": "Skylight account password — required iff SKYLIGHT_EMAIL is set.",
+          "description": "Skylight account password — required iff SKYLIGHT_EMAIL is set. Needed only if you are not supplying SKYLIGHT_REFRESH_TOKEN.",
           "isRequired": false,
           "format": "string",
           "isSecret": true

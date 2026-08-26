@@ -66,6 +66,58 @@ describe('resolveAuth', () => {
     );
   });
 
+  it('mints from a supplied refresh token and never touches the login endpoint', async () => {
+    // The point of path 1: a consumer who holds a token should not have to give
+    // up a password, AND the rate-limited login endpoint stays untouched on a
+    // cold start — which on a scale-to-zero host is every start.
+    process.env.SKYLIGHT_REFRESH_TOKEN = 'SUPPLIED_RT';
+    mockRefresh.mockResolvedValue(GOOD_TOKENS);
+
+    const httpFetch = vi.fn().mockResolvedValue(okResponse());
+    const { client } = await resolveAuth({ ...noCache, httpFetch });
+    await client.request('GET', '/frames');
+
+    expect(mockLogin).not.toHaveBeenCalled();
+    expect(mockRefresh).toHaveBeenCalledWith(
+      expect.objectContaining({ refreshToken: 'SUPPLIED_RT' }),
+      expect.anything(),
+    );
+  });
+
+  it('tells a token-only deployment the token is stale, not that it is unconfigured', async () => {
+    // The lesson from untappd-mcp#140: a SUPPLIED credential that goes stale
+    // must not be reported as a missing one. There is no login pair here, so
+    // nothing can recover it automatically — say so, and name the variable.
+    process.env.SKYLIGHT_REFRESH_TOKEN = 'STALE_RT';
+    mockRefresh.mockRejectedValue(new Error('invalid_grant'));
+
+    const httpFetch = vi.fn().mockResolvedValue(okResponse());
+    const { client } = await resolveAuth({ ...noCache, httpFetch });
+    const err = await client.request('GET', '/frames').catch((e: Error) => e);
+
+    expect(String(err)).toMatch(/SKYLIGHT_REFRESH_TOKEN/);
+    expect(String(err)).toMatch(/expired|revoked|no longer/i);
+    expect(String(err)).not.toMatch(/Missing Skylight auth config/);
+    expect(mockLogin).not.toHaveBeenCalled();
+  });
+
+  it('falls back to the login when a supplied token is stale AND a password exists', async () => {
+    // Both configured means the operator asked for recovery: use the narrow
+    // credential first, fall back to the broad one rather than failing.
+    process.env.SKYLIGHT_REFRESH_TOKEN = 'STALE_RT';
+    process.env.SKYLIGHT_EMAIL = 'a@b.com';
+    process.env.SKYLIGHT_PASSWORD = 'pw';
+    mockRefresh.mockRejectedValue(new Error('invalid_grant'));
+    mockLogin.mockResolvedValue(GOOD_TOKENS);
+
+    const httpFetch = vi.fn().mockResolvedValue(okResponse());
+    const { client } = await resolveAuth({ ...noCache, httpFetch });
+    await client.request('GET', '/frames');
+
+    expect(mockRefresh).toHaveBeenCalled();
+    expect(mockLogin).toHaveBeenCalledOnce();
+  });
+
   it('logs in once for a burst of concurrent first requests', async () => {
     process.env.SKYLIGHT_EMAIL = 'a@b.com';
     process.env.SKYLIGHT_PASSWORD = 'pw';
@@ -248,6 +300,45 @@ describe('resolveAuth token cache', () => {
       rmSync(dir, { recursive: true, force: true });
       delete process.env.MCP_DATA_DIR;
     }
+  });
+
+  it('binds the default on-disk cache to a supplied refresh token', async () => {
+    // The token arm of the same default-persistence wiring: with no login pair
+    // there is no email/password to bind to, so the binding must come from the
+    // supplied token instead.
+    process.env.SKYLIGHT_REFRESH_TOKEN = 'SUPPLIED_RT';
+    mockRefresh.mockResolvedValue(GOOD_TOKENS);
+    const dir = mkdtempSync(join(tmpdir(), 'skylight-auth-rt-'));
+    process.env.MCP_DATA_DIR = dir;
+    try {
+      const httpFetch = vi.fn().mockResolvedValue(okResponse());
+      const { client } = await resolveAuth({ httpFetch }); // no persistence override
+      await client.request('GET', '/frames');
+
+      const file = join(dir, '.skylight-mcp', 'tokens.json');
+      expect(existsSync(file)).toBe(true);
+      // The supplied token is the BINDING, never the payload — it must not
+      // reach the file.
+      expect(readFileSync(file, 'utf8')).not.toContain('SUPPLIED_RT');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+      delete process.env.MCP_DATA_DIR;
+    }
+  });
+
+  it('reports a non-Error rejection from the refresh grant without losing it', async () => {
+    // Nothing guarantees a rejection is an Error. Stringifying whatever came
+    // back keeps the upstream detail in the message instead of "[object
+    // Object]" or a silently empty cause.
+    process.env.SKYLIGHT_REFRESH_TOKEN = 'STALE_RT';
+    mockRefresh.mockRejectedValue('invalid_grant: token revoked');
+
+    const httpFetch = vi.fn().mockResolvedValue(okResponse());
+    const { client } = await resolveAuth({ ...noCache, httpFetch });
+    const err = await client.request('GET', '/frames').catch((e: Error) => e);
+
+    expect(String(err)).toMatch(/SKYLIGHT_REFRESH_TOKEN/);
+    expect(String(err)).toMatch(/invalid_grant: token revoked/);
   });
 
   it('skips the login entirely when a cached token is still valid', async () => {
