@@ -1,4 +1,5 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
+import { timingSafeEqual } from 'node:crypto';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { makeGetClient } from '../src/get-client.js';
@@ -37,7 +38,26 @@ function createServer() {
   return server;
 }
 
+function isAuthorized(req: IncomingMessage): boolean {
+  const expected = process.env.MCP_API_KEY;
+  if (!expected) return false;
+  const auth = req.headers.authorization;
+  if (!auth?.startsWith('Bearer ')) return false;
+  const supplied = auth.slice(7);
+  const a = Buffer.from(supplied);
+  const b = Buffer.from(expected);
+  return a.length === b.length && timingSafeEqual(a, b);
+}
+
 export default async function handler(req: IncomingMessage & { body?: unknown }, res: ServerResponse) {
+  if (!isAuthorized(req)) {
+    res.statusCode = 401;
+    res.setHeader('www-authenticate', 'Bearer');
+    res.setHeader('content-type', 'application/json');
+    res.end(JSON.stringify({ error: 'Unauthorized' }));
+    return;
+  }
+
   if (req.method === 'GET') {
     res.statusCode = 200;
     res.setHeader('content-type', 'application/json');
