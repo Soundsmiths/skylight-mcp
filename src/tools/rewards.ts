@@ -36,10 +36,11 @@ export function registerRewardTools(server: McpServer, getClient: GetClient) {
       name: z.string().optional(),
       point_value: z.number().optional(),
       category_ids: idArrayParam.optional(),
+      emoji_icon: z.string().optional(),
       frameId: z.string().optional(),
     },
-    frameScoped(getClient, async (c, f, { id, name, point_value, category_ids }: { id: string; name?: string; point_value?: number; category_ids?: Array<string | number>; frameId?: string }) => {
-      const doc = await c.request<JsonApiDoc>('PATCH', `/frames/${f}/rewards/${id}`, { body: pruneUndefined({ name, point_value, category_ids }) });
+    frameScoped(getClient, async (c, f, { id, name, point_value, category_ids, emoji_icon }: { id: string; name?: string; point_value?: number; category_ids?: Array<string | number>; emoji_icon?: string; frameId?: string }) => {
+      const doc = await c.request<JsonApiDoc>('PATCH', `/frames/${f}/rewards/${id}`, { body: pruneUndefined({ name, point_value, category_ids, emoji_icon }) });
       return textContent(flattenJsonApi(doc));
     }),
   );
